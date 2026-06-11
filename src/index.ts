@@ -2,6 +2,12 @@ type TypeAnnotation = { type: "TSTypeAnnotation" };
 
 type Expression = { type: string };
 
+// Only `length` matters here -- the element/property nodes themselves are never
+// inspected, so their shape is left opaque.
+type ArrayExpression = { type: "ArrayExpression"; elements: unknown[] };
+
+type ObjectExpression = { type: "ObjectExpression"; properties: unknown[] };
+
 // `expr as T`: `expression` is the asserted value and `typeAnnotation` is the
 // target type. `as const` is the special case where the annotation is a
 // `TSTypeReference` whose name is the reserved word `const`; `const` cannot be a
@@ -29,9 +35,17 @@ type VariableDeclarator = {
 
 type ReportDescriptor = { message: string; node: unknown };
 
+// `allowEmptyLiteral` is a union: `true` (default) skips empty literals, `false`
+// reports them with the standard message, and `{ message }` reports them with a
+// caller-supplied message. The object form exists because the standard
+// "use satisfies" message is wrong for an empty literal -- `satisfies` cannot
+// type it usefully -- so anyone who opts into reporting needs to override it.
+type EmptyLiteralOption = boolean | { message: string };
+
 type RuleOptions = {
   allowWithoutAnnotation?: boolean;
   allowAsAssertion?: boolean;
+  allowEmptyLiteral?: EmptyLiteralOption;
 };
 
 type RuleContext = {
@@ -88,6 +102,30 @@ const unwrapAsChain = (init: AsExpression): Expression => {
   return current;
 };
 
+// An empty object/array literal: `{}` / `[]` with zero properties/elements.
+// `satisfies` is useless here -- `[] satisfies number[]` still infers `never[]`
+// and `{} satisfies T` still infers `{}`, so the bound value is unusable. A
+// spread (`[...xs]` / `{...o}`) counts as non-empty: its type propagates, so
+// `satisfies` works and the literal stays in scope.
+const isEmptyObjectOrArrayLiteral = (node: Expression): boolean => {
+  if (node.type === "ArrayExpression") {
+    return (node as ArrayExpression).elements.length === 0;
+  }
+  if (node.type === "ObjectExpression") {
+    return (node as ObjectExpression).properties.length === 0;
+  }
+  return false;
+};
+
+// Resolve an initializer to the literal it ultimately is -- unwrapping any `as`
+// chain -- then test whether that literal is empty. `{} as T` and
+// `{} as unknown as T` are both empty-literal cases.
+const initIsEmptyLiteral = (init: Expression): boolean => {
+  const target =
+    init.type === "TSAsExpression" ? unwrapAsChain(init as AsExpression) : init;
+  return isEmptyObjectOrArrayLiteral(target);
+};
+
 // Type annotation present: `const x: T = {...}`. Always reported -- the type
 // must move into a `satisfies` clause regardless of options.
 const annotatedMessage = (name: string): string => {
@@ -113,7 +151,7 @@ const rule = {
     type: "suggestion",
     docs: {
       description:
-        "Require object and array literals bound to a `const` to declare their type with `satisfies` rather than a binding annotation or an `as` assertion. A type annotation is always reported; a missing type is reported unless the `allowWithoutAnnotation` option is enabled; an `as` assertion other than `as const` is reported unless the `allowAsAssertion` option is enabled.",
+        "Require object and array literals bound to a `const` to declare their type with `satisfies` rather than a binding annotation or an `as` assertion. A type annotation is always reported; a missing type is reported unless the `allowWithoutAnnotation` option is enabled; an `as` assertion other than `as const` is reported unless the `allowAsAssertion` option is enabled. An empty object/array literal (`{}` / `[]`) is allowed by default because `satisfies` cannot type it usefully; set `allowEmptyLiteral` to `false` to report it with the standard message, or to `{ message }` to report it with a custom message.",
     },
     schema: [
       {
@@ -121,6 +159,17 @@ const rule = {
         properties: {
           allowWithoutAnnotation: { type: "boolean" },
           allowAsAssertion: { type: "boolean" },
+          allowEmptyLiteral: {
+            oneOf: [
+              { type: "boolean" },
+              {
+                type: "object",
+                properties: { message: { type: "string", minLength: 1 } },
+                required: ["message"],
+                additionalProperties: false,
+              },
+            ],
+          },
         },
         additionalProperties: false,
       },
@@ -130,6 +179,9 @@ const rule = {
     const allowWithoutAnnotation =
       context.options[0]?.allowWithoutAnnotation === true;
     const allowAsAssertion = context.options[0]?.allowAsAssertion === true;
+    const rawEmptyLiteral = context.options[0]?.allowEmptyLiteral;
+    const allowEmptyLiteral: EmptyLiteralOption =
+      rawEmptyLiteral === undefined ? true : rawEmptyLiteral;
 
     const checkDeclarator = (node: VariableDeclarator): void => {
       if (node.parent?.kind !== "const") {
@@ -143,11 +195,27 @@ const rule = {
       if (init === null || init === undefined) {
         return;
       }
-      if (init.type === "TSAsExpression") {
-        const asExpr = init as AsExpression;
-        if (isAsConst(asExpr)) {
+      // `as const` is always allowed, empty or not -- resolve it before the
+      // empty-literal gate so `{} as const` is never treated as an empty
+      // literal to report.
+      if (init.type === "TSAsExpression" && isAsConst(init as AsExpression)) {
+        return;
+      }
+      // Empty literals (`{}` / `[]`, including through an `as` chain): by
+      // default they are skipped because `satisfies` cannot type them. `false`
+      // falls through to the normal 0.0.1 handling; the object form reports
+      // with the caller's custom message.
+      if (initIsEmptyLiteral(init)) {
+        if (allowEmptyLiteral === true) {
           return;
         }
+        if (allowEmptyLiteral !== false) {
+          context.report({ message: allowEmptyLiteral.message, node: id });
+          return;
+        }
+      }
+      if (init.type === "TSAsExpression") {
+        const asExpr = init as AsExpression;
         if (!isPlainObjectOrArrayLiteral(unwrapAsChain(asExpr))) {
           return;
         }
