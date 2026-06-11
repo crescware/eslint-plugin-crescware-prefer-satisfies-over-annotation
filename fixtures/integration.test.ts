@@ -9,6 +9,7 @@ const oxlintBin = resolve(repoRoot, "node_modules/.bin/oxlint");
 const fixturesDir = resolve(repoRoot, "fixtures");
 const defaultConfig = resolve(fixturesDir, "oxlintrc.default.json");
 const allowConfig = resolve(fixturesDir, "oxlintrc.allow.json");
+const allowAsConfig = resolve(fixturesDir, "oxlintrc.allow-as.json");
 
 type Diagnostic = {
   message: string;
@@ -45,8 +46,13 @@ const annotationlessMessage = (name: string): string => {
   return `Const '${name}' has a literal initializer with no declared type. Add a 'satisfies' clause: write 'const ${name} = ... satisfies T'.`;
 };
 
+const asAssertionMessage = (name: string): string => {
+  return `Const '${name}' uses an 'as' assertion on a literal initializer. Move the type into a 'satisfies' clause: write 'const ${name} = ... satisfies T' instead of 'const ${name} = ... as T'. ('as const' is allowed.)`;
+};
+
 let defaultDiagnostics: Diagnostic[] = [];
 let allowDiagnostics: Diagnostic[] = [];
+let allowAsDiagnostics: Diagnostic[] = [];
 
 beforeAll(() => {
   const probe = spawnSync(oxlintBin, ["--version"], { encoding: "utf8" });
@@ -55,6 +61,7 @@ beforeAll(() => {
   }
   defaultDiagnostics = runFixtures(defaultConfig);
   allowDiagnostics = runFixtures(allowConfig);
+  allowAsDiagnostics = runFixtures(allowAsConfig);
 });
 
 const okFiles = [
@@ -80,12 +87,21 @@ describe("default options", () => {
     ]);
   });
 
+  test("'as' assertions on literals are reported", () => {
+    expect(messagesFor(defaultDiagnostics, "ng-as.ts")).toEqual([
+      asAssertionMessage("origin"),
+      asAssertionMessage("nums"),
+      asAssertionMessage("forced"),
+      asAssertionMessage("forcedArr"),
+    ]);
+  });
+
   test.each(okFiles)("%s has no diagnostics", (file) => {
     expect(messagesFor(defaultDiagnostics, file)).toEqual([]);
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(defaultDiagnostics.length).toBe(5);
+    expect(defaultDiagnostics.length).toBe(9);
   });
 });
 
@@ -101,11 +117,49 @@ describe("allowWithoutAnnotation: true", () => {
     expect(messagesFor(allowDiagnostics, "ng-annotationless.ts")).toEqual([]);
   });
 
+  test("'as' assertions on literals are still reported", () => {
+    expect(messagesFor(allowDiagnostics, "ng-as.ts")).toEqual([
+      asAssertionMessage("origin"),
+      asAssertionMessage("nums"),
+      asAssertionMessage("forced"),
+      asAssertionMessage("forcedArr"),
+    ]);
+  });
+
   test.each(okFiles)("%s has no diagnostics", (file) => {
     expect(messagesFor(allowDiagnostics, file)).toEqual([]);
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(allowDiagnostics.length).toBe(2);
+    expect(allowDiagnostics.length).toBe(6);
+  });
+});
+
+describe("allowAsAssertion: true", () => {
+  test("annotated literals are still reported", () => {
+    expect(messagesFor(allowAsDiagnostics, "ng-annotated.ts")).toEqual([
+      annotatedMessage("origin"),
+      annotatedMessage("nums"),
+    ]);
+  });
+
+  test("annotationless literals are still reported", () => {
+    expect(messagesFor(allowAsDiagnostics, "ng-annotationless.ts")).toEqual([
+      annotationlessMessage("obj"),
+      annotationlessMessage("arr"),
+      annotationlessMessage("empty"),
+    ]);
+  });
+
+  test("'as' assertions on literals are ignored", () => {
+    expect(messagesFor(allowAsDiagnostics, "ng-as.ts")).toEqual([]);
+  });
+
+  test.each(okFiles)("%s has no diagnostics", (file) => {
+    expect(messagesFor(allowAsDiagnostics, file)).toEqual([]);
+  });
+
+  test("total diagnostics are fully accounted for", () => {
+    expect(allowAsDiagnostics.length).toBe(5);
   });
 });
