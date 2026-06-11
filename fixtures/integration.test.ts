@@ -10,6 +10,8 @@ const fixturesDir = resolve(repoRoot, "fixtures");
 const defaultConfig = resolve(fixturesDir, "oxlintrc.default.json");
 const allowConfig = resolve(fixturesDir, "oxlintrc.allow.json");
 const allowAsConfig = resolve(fixturesDir, "oxlintrc.allow-as.json");
+const emptyStrictConfig = resolve(fixturesDir, "oxlintrc.empty-strict.json");
+const emptyMessageConfig = resolve(fixturesDir, "oxlintrc.empty-message.json");
 
 type Diagnostic = {
   message: string;
@@ -50,9 +52,15 @@ const asAssertionMessage = (name: string): string => {
   return `Const '${name}' uses an 'as' assertion on a literal initializer. Move the type into a 'satisfies' clause: write 'const ${name} = ... satisfies T' instead of 'const ${name} = ... as T'. ('as const' is allowed.)`;
 };
 
+// Must match the `message` in fixtures/oxlintrc.empty-message.json exactly.
+const emptyCustomMessage =
+  "Empty literal: 'satisfies' cannot type it; declare the type with an explicit annotation instead.";
+
 let defaultDiagnostics: Diagnostic[] = [];
 let allowDiagnostics: Diagnostic[] = [];
 let allowAsDiagnostics: Diagnostic[] = [];
+let emptyStrictDiagnostics: Diagnostic[] = [];
+let emptyMessageDiagnostics: Diagnostic[] = [];
 
 beforeAll(() => {
   const probe = spawnSync(oxlintBin, ["--version"], { encoding: "utf8" });
@@ -62,6 +70,8 @@ beforeAll(() => {
   defaultDiagnostics = runFixtures(defaultConfig);
   allowDiagnostics = runFixtures(allowConfig);
   allowAsDiagnostics = runFixtures(allowAsConfig);
+  emptyStrictDiagnostics = runFixtures(emptyStrictConfig);
+  emptyMessageDiagnostics = runFixtures(emptyMessageConfig);
 });
 
 const okFiles = [
@@ -69,6 +79,10 @@ const okFiles = [
   "ok-as.ts",
   "ok-out-of-scope.ts",
   "ok-let-var.ts",
+  "ok-js.js",
+  "ok-mjs.mjs",
+  "ok-cjs.cjs",
+  "ok-jsx.jsx",
 ] satisfies string[];
 
 describe("default options", () => {
@@ -83,7 +97,6 @@ describe("default options", () => {
     expect(messagesFor(defaultDiagnostics, "ng-annotationless.ts")).toEqual([
       annotationlessMessage("obj"),
       annotationlessMessage("arr"),
-      annotationlessMessage("empty"),
     ]);
   });
 
@@ -96,12 +109,16 @@ describe("default options", () => {
     ]);
   });
 
+  test("empty literals are allowed by default", () => {
+    expect(messagesFor(defaultDiagnostics, "ng-empty.ts")).toEqual([]);
+  });
+
   test.each(okFiles)("%s has no diagnostics", (file) => {
     expect(messagesFor(defaultDiagnostics, file)).toEqual([]);
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(defaultDiagnostics.length).toBe(9);
+    expect(defaultDiagnostics.length).toBe(8);
   });
 });
 
@@ -126,6 +143,10 @@ describe("allowWithoutAnnotation: true", () => {
     ]);
   });
 
+  test("empty literals are allowed by default", () => {
+    expect(messagesFor(allowDiagnostics, "ng-empty.ts")).toEqual([]);
+  });
+
   test.each(okFiles)("%s has no diagnostics", (file) => {
     expect(messagesFor(allowDiagnostics, file)).toEqual([]);
   });
@@ -147,7 +168,6 @@ describe("allowAsAssertion: true", () => {
     expect(messagesFor(allowAsDiagnostics, "ng-annotationless.ts")).toEqual([
       annotationlessMessage("obj"),
       annotationlessMessage("arr"),
-      annotationlessMessage("empty"),
     ]);
   });
 
@@ -155,11 +175,88 @@ describe("allowAsAssertion: true", () => {
     expect(messagesFor(allowAsDiagnostics, "ng-as.ts")).toEqual([]);
   });
 
+  test("empty literals are allowed by default", () => {
+    expect(messagesFor(allowAsDiagnostics, "ng-empty.ts")).toEqual([]);
+  });
+
   test.each(okFiles)("%s has no diagnostics", (file) => {
     expect(messagesFor(allowAsDiagnostics, file)).toEqual([]);
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(allowAsDiagnostics.length).toBe(5);
+    expect(allowAsDiagnostics.length).toBe(4);
+  });
+});
+
+describe("allowEmptyLiteral: false", () => {
+  test("empty literals fall back to the standard messages", () => {
+    expect(messagesFor(emptyStrictDiagnostics, "ng-empty.ts")).toEqual([
+      annotationlessMessage("emptyObj"),
+      annotationlessMessage("emptyArr"),
+      annotatedMessage("annotatedEmptyObj"),
+      annotatedMessage("annotatedEmptyArr"),
+      asAssertionMessage("asEmptyObj"),
+      asAssertionMessage("asEmptyArr"),
+      asAssertionMessage("chainedEmptyObj"),
+    ]);
+  });
+
+  test("non-empty literals are reported as usual", () => {
+    expect(messagesFor(emptyStrictDiagnostics, "ng-annotated.ts")).toEqual([
+      annotatedMessage("origin"),
+      annotatedMessage("nums"),
+    ]);
+    expect(messagesFor(emptyStrictDiagnostics, "ng-annotationless.ts")).toEqual(
+      [annotationlessMessage("obj"), annotationlessMessage("arr")],
+    );
+    expect(messagesFor(emptyStrictDiagnostics, "ng-as.ts")).toEqual([
+      asAssertionMessage("origin"),
+      asAssertionMessage("nums"),
+      asAssertionMessage("forced"),
+      asAssertionMessage("forcedArr"),
+    ]);
+  });
+
+  test.each(okFiles)("%s has no diagnostics", (file) => {
+    expect(messagesFor(emptyStrictDiagnostics, file)).toEqual([]);
+  });
+
+  test("total diagnostics are fully accounted for", () => {
+    expect(emptyStrictDiagnostics.length).toBe(15);
+  });
+});
+
+describe("allowEmptyLiteral: { message }", () => {
+  test("empty literals are reported with the custom message", () => {
+    expect(messagesFor(emptyMessageDiagnostics, "ng-empty.ts")).toEqual([
+      emptyCustomMessage,
+      emptyCustomMessage,
+      emptyCustomMessage,
+      emptyCustomMessage,
+      emptyCustomMessage,
+      emptyCustomMessage,
+      emptyCustomMessage,
+    ]);
+  });
+
+  test("non-empty literals keep their standard messages", () => {
+    expect(messagesFor(emptyMessageDiagnostics, "ng-annotated.ts")).toEqual([
+      annotatedMessage("origin"),
+      annotatedMessage("nums"),
+    ]);
+    expect(messagesFor(emptyMessageDiagnostics, "ng-as.ts")).toEqual([
+      asAssertionMessage("origin"),
+      asAssertionMessage("nums"),
+      asAssertionMessage("forced"),
+      asAssertionMessage("forcedArr"),
+    ]);
+  });
+
+  test.each(okFiles)("%s has no diagnostics", (file) => {
+    expect(messagesFor(emptyMessageDiagnostics, file)).toEqual([]);
+  });
+
+  test("total diagnostics are fully accounted for", () => {
+    expect(emptyMessageDiagnostics.length).toBe(15);
   });
 });
