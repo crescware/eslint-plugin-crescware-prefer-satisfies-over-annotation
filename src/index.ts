@@ -15,7 +15,13 @@ type VariableDeclarator = {
 };
 
 type ReportDescriptor = { message: string; node: unknown };
-type RuleContext = { report: (descriptor: ReportDescriptor) => void };
+
+type RuleOptions = { allowWithoutAnnotation?: boolean };
+
+type RuleContext = {
+  options: RuleOptions[];
+  report: (descriptor: ReportDescriptor) => void;
+};
 
 type Visitor = Record<string, (node: never) => void>;
 
@@ -29,24 +35,26 @@ type Plugin = {
   rules: Record<string, Rule>;
 };
 
-// Literal initializers that should carry their type via `satisfies` instead of
-// a binding annotation. A plain object literal (`{}`, `{ a: 1 }`) is an
-// ObjectExpression and an array literal (`[]`, `[1, 2]`) is an ArrayExpression.
-// Anything else as the initializer (`JSON.parse(...)` -> CallExpression,
-// `1` -> Literal, `x satisfies T` -> TSSatisfiesExpression) is out of scope.
-const literalKind = (init: Expression): "object" | "array" | null => {
-  if (init.type === "ObjectExpression") {
-    return "object";
-  }
-  if (init.type === "ArrayExpression") {
-    return "array";
-  }
-  return null;
+// A "plain literal" is an object/array literal with neither a `satisfies` nor an
+// `as` clause. Only these surface as ObjectExpression / ArrayExpression: adding
+// `satisfies T` makes the initializer a TSSatisfiesExpression, and `as T` /
+// `as const` make it a TSAsExpression, so both are already out of scope. Any
+// other initializer (`JSON.parse(...)` -> CallExpression, `1` -> Literal) is
+// likewise excluded.
+const isPlainObjectOrArrayLiteral = (init: Expression): boolean => {
+  return init.type === "ObjectExpression" || init.type === "ArrayExpression";
 };
 
-const buildMessage = (name: string, kind: "object" | "array"): string => {
-  const placeholder = kind === "object" ? "{...}" : "[...]";
-  return `Prefer 'satisfies' over a type annotation on the ${kind} literal bound to '${name}'. Replace 'const ${name}: T = ${placeholder}' with 'const ${name} = ${placeholder} satisfies T'.`;
+// Type annotation present: `const x: T = {...}`. Always reported -- the type
+// must move into a `satisfies` clause regardless of options.
+const annotatedMessage = (name: string): string => {
+  return `Const '${name}' has a type annotation on a literal initializer. Move the type into a 'satisfies' clause: write 'const ${name} = ... satisfies T' instead of 'const ${name}: T = ...'.`;
+};
+
+// No annotation: `const x = {...}`. Reported by default; suppressed only when
+// the `allowWithoutAnnotation` option is true.
+const annotationlessMessage = (name: string): string => {
+  return `Const '${name}' has a literal initializer with no declared type. Add a 'satisfies' clause: write 'const ${name} = ... satisfies T'.`;
 };
 
 const rule = {
@@ -54,11 +62,22 @@ const rule = {
     type: "suggestion",
     docs: {
       description:
-        "Prefer `const x = {...} satisfies T` over `const x: T = {...}` for object and array literal initializers, so excess-property checks stay strict while the literal keeps its narrow inferred type.",
+        "Require object and array literals bound to a `const` to declare their type with `satisfies` rather than a binding annotation. A type annotation is always reported; a missing type is reported unless the `allowWithoutAnnotation` option is enabled.",
     },
-    schema: [],
+    schema: [
+      {
+        type: "object",
+        properties: {
+          allowWithoutAnnotation: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+    ],
   },
   create(context: RuleContext): Visitor {
+    const allowWithoutAnnotation =
+      context.options[0]?.allowWithoutAnnotation === true;
+
     const checkDeclarator = (node: VariableDeclarator): void => {
       if (node.parent?.kind !== "const") {
         return;
@@ -67,21 +86,21 @@ const rule = {
       if (id.type !== "Identifier" || typeof id.name !== "string") {
         return;
       }
-      if (id.typeAnnotation?.type !== "TSTypeAnnotation") {
-        return;
-      }
       const init = node.init;
       if (init === null || init === undefined) {
         return;
       }
-      const kind = literalKind(init);
-      if (kind === null) {
+      if (!isPlainObjectOrArrayLiteral(init)) {
         return;
       }
-      context.report({
-        message: buildMessage(id.name, kind),
-        node: id,
-      });
+      if (id.typeAnnotation?.type === "TSTypeAnnotation") {
+        context.report({ message: annotatedMessage(id.name), node: id });
+        return;
+      }
+      if (allowWithoutAnnotation) {
+        return;
+      }
+      context.report({ message: annotationlessMessage(id.name), node: id });
     };
 
     return {

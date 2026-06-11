@@ -18,7 +18,7 @@
     "check:knip": "knip",
     "check:lint": "oxlint && oxfmt --check",
     "check:types": "tsgo -p tsconfig.json --noEmit",
-    "exec:fixtures": "oxlint -c fixtures/oxlintrc.fixtures.json --no-ignore -f json fixtures/",
+    "exec:fixtures": "oxlint -c fixtures/oxlintrc.default.json --no-ignore -f json fixtures/",
     "format": "oxlint --fix && oxfmt",
     "prepublishOnly": "pnpm run build",
     "test": "vitest run"

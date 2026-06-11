@@ -4,27 +4,49 @@ An [oxlint](https://oxc.rs/docs/guide/usage/linter) JS plugin that prefers `sati
 
 ## Rule: `prefer-satisfies-over-annotation`
 
-When a `const` binding annotates an **object literal** or **array literal** initializer with a type, the rule reports it and suggests moving the type to a `satisfies` clause:
+A `const` whose initializer is a plain object or array literal should declare its type with `satisfies`, not with a binding annotation. `satisfies` keeps excess-property checking strict while preserving the literal's narrow inferred type, instead of widening it to the annotation.
 
 ```ts
-// NG
+// NG: a type annotation on the literal (always reported)
 const obj: Something = { ... };
 const arr: Something[] = [ ... ];
+
+// NG: a literal with no declared type (reported unless `allowWithoutAnnotation` is enabled)
+const obj = { ... };
+const arr = [ ... ];
 
 // OK
 const obj = { ... } satisfies Something;
 const arr = [ ... ] satisfies Something[];
 ```
 
-`satisfies` keeps excess-property checking strict while preserving the literal's narrow inferred type, instead of widening it to the annotation.
-
 ### Scope
 
-The rule fires only when the initializer is a literal:
+The rule fires only when the initializer is a plain object or array literal (`ObjectExpression` / `ArrayExpression`). Object and array literals are treated the same.
 
-- Targets: `const x: T = {}` (object literal) and `const x: T = []` (array literal).
-- Out of scope: initializers that are not object/array literals — e.g. `const v: unknown = JSON.parse(...)`, `const n: number = 1`, `const s: string = "x"`. These keep their annotation and are not reported.
-- Out of scope: `let` / `var` declarations, and bindings without a type annotation.
+- With a type annotation (`const x: T = {}`): always reported.
+- Without a type annotation (`const x = {}`): reported by default, ignored when `allowWithoutAnnotation` is `true`.
+- Out of scope: initializers that are not plain object/array literals — `const x = {} satisfies T`, `const x = {} as T`, `const x = {} as const`, `const v: unknown = JSON.parse(...)`, `const n: number = 1`.
+- Out of scope: `let` / `var` declarations.
+
+The rule does not autofix; it reports only.
+
+### Options
+
+```jsonc
+"crescware-prefer-satisfies-over-annotation/prefer-satisfies-over-annotation": [
+  "error",
+  {
+    // false (default): a literal without a type annotation is reported.
+    // true: only annotated literals are reported; annotationless ones pass.
+    "allowWithoutAnnotation": false
+  }
+]
+```
+
+| Option                   | Type      | Default | Effect                                                                                                            |
+| ------------------------ | --------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `allowWithoutAnnotation` | `boolean` | `false` | When `true`, suppresses reports for literals that have no type annotation. Annotated literals are still reported. |
 
 ## Usage
 
