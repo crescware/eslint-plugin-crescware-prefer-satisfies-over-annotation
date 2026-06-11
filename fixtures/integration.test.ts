@@ -79,6 +79,10 @@ const okFiles = [
   "ok-as.ts",
   "ok-out-of-scope.ts",
   "ok-let-var.ts",
+  "ok-js.js",
+  "ok-mjs.mjs",
+  "ok-cjs.cjs",
+  "ok-jsx.jsx",
 ] satisfies string[];
 
 describe("default options", () => {

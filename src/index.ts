@@ -49,6 +49,7 @@ type RuleOptions = {
 };
 
 type RuleContext = {
+  filename: string;
   options: RuleOptions[];
   report: (descriptor: ReportDescriptor) => void;
 };
@@ -63,6 +64,17 @@ type Rule = {
 type Plugin = {
   meta: { name: string };
   rules: Record<string, Rule>;
+};
+
+// This rule targets TypeScript-only syntax (`satisfies`, `as`, and binding type
+// annotations), so it is meaningless on plain JavaScript. Files whose extension
+// is `.js` / `.mjs` / `.cjs` / `.jsx` are skipped entirely; `.ts` / `.tsx` /
+// `.mts` / `.cts` stay in scope.
+const JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".jsx"] satisfies string[];
+
+const isJavaScriptFile = (filename: string): boolean => {
+  const lower = filename.toLowerCase();
+  return JS_EXTENSIONS.some((ext) => lower.endsWith(ext));
 };
 
 // A "plain literal" is an object/array literal with neither a `satisfies` nor an
@@ -176,6 +188,10 @@ const rule = {
     ],
   },
   create(context: RuleContext): Visitor {
+    // TypeScript-only rule: do nothing on JavaScript files.
+    if (isJavaScriptFile(context.filename)) {
+      return {};
+    }
     const allowWithoutAnnotation =
       context.options[0]?.allowWithoutAnnotation === true;
     const allowAsAssertion = context.options[0]?.allowAsAssertion === true;
