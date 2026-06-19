@@ -19,10 +19,14 @@ const arr = [ ... ];
 const obj = { ... } as Something;
 const arr = [ ... ] as Something[];
 
+// NG: `as const` declares no type to check against (reported unless `allowAsConst` is enabled)
+const frozen = { ... } as const;
+
 // OK
 const obj = { ... } satisfies Something;
 const arr = [ ... ] satisfies Something[];
-const frozen = { ... } as const;
+// keep the freeze of `as const` and add a check -- `as const` comes first:
+const frozen = { ... } as const satisfies Something;
 
 // OK: empty literals are allowed by default -- `satisfies` cannot type them
 // (`[] satisfies T` still infers `never[]`). See `allowEmptyLiteral`.
@@ -37,8 +41,9 @@ The rule fires when a `const` initializer is a plain object or array literal (`O
 - With a type annotation (`const x: T = {...}`): always reported.
 - Without a type annotation (`const x = {...}`): reported by default, ignored when `allowWithoutAnnotation` is `true`.
 - With an `as` assertion other than `as const` (`const x = {...} as T`, including chains such as `{...} as unknown as T`): reported by default, ignored when `allowAsAssertion` is `true`.
-- An empty literal (`const x = {}` / `const x = []`, with zero properties/elements): allowed by default, because `satisfies` cannot type it usefully (`[] satisfies T` still infers `never[]`). Controlled by `allowEmptyLiteral`. A spread (`[...xs]` / `{...o}`) counts as non-empty and stays in scope.
-- Out of scope: `as const` (`const x = {...} as const`), a `satisfies` clause (`const x = {...} satisfies T`), and initializers that are not object/array literals (`const v = JSON.parse(...)`, `const n: number = 1`).
+- With an `as const` assertion (`const x = {...} as const`): reported by default, ignored when `allowAsConst` is `true`. `as const` freezes the literal but declares no type to check against; to keep the freeze and add a check, write `{...} as const satisfies T` (the `as const` must come before `satisfies` -- `{...} satisfies T as const` is a type error because `as const` can only apply to a literal).
+- An empty literal (`const x = {}` / `const x = []`, with zero properties/elements): allowed by default, because `satisfies` cannot type it usefully (`[] satisfies T` still infers `never[]`). Controlled by `allowEmptyLiteral`, which takes precedence over `allowAsConst` (so `{} as const` follows the `allowEmptyLiteral` policy). A spread (`[...xs]` / `{...o}`) counts as non-empty and stays in scope.
+- Out of scope: a `satisfies` clause (`const x = {...} satisfies T`), and initializers that are not object/array literals (`const v = JSON.parse(...)`, `const n: number = 1`).
 - Out of scope: `let` / `var` declarations.
 
 The rule does not autofix; it reports only.
@@ -57,6 +62,11 @@ The rule does not autofix; it reports only.
     // true: `as` assertions on literals pass.
     "allowAsAssertion": false,
 
+    // false (default): a bare `as const` on a literal is reported.
+    // true: `as const` on literals passes. (To keep the freeze and a check,
+    //       write `{...} as const satisfies T`.)
+    "allowAsConst": false,
+
     // true (default): empty `{}` / `[]` literals are not reported.
     // false: report them with the standard message.
     // { "message": "..." }: report them with that custom message.
@@ -69,6 +79,7 @@ The rule does not autofix; it reports only.
 | ------------------------ | -------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `allowWithoutAnnotation` | `boolean`                        | `false` | When `true`, suppresses reports for literals that have no type annotation. Annotated and `as`-asserted literals are still reported.                                    |
 | `allowAsAssertion`       | `boolean`                        | `false` | When `true`, suppresses reports for `as` assertions (other than `as const`) on literals.                                                                               |
+| `allowAsConst`           | `boolean`                        | `false` | When `true`, suppresses reports for a bare `as const` on a literal. To keep the freeze while declaring a type, write `{...} as const satisfies T` (`as const` first).  |
 | `allowEmptyLiteral`      | `boolean \| { message: string }` | `true`  | An empty `{}` / `[]` cannot be typed by `satisfies`. `true` skips it; `false` reports it with the standard message; `{ message }` reports it with that custom message. |
 
 ## Usage
