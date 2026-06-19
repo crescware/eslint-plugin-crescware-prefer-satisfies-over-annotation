@@ -10,6 +10,7 @@ const fixturesDir = resolve(repoRoot, "fixtures");
 const defaultConfig = resolve(fixturesDir, "oxlintrc.default.json");
 const allowConfig = resolve(fixturesDir, "oxlintrc.allow.json");
 const allowAsConfig = resolve(fixturesDir, "oxlintrc.allow-as.json");
+const allowAsConstConfig = resolve(fixturesDir, "oxlintrc.allow-as-const.json");
 const emptyStrictConfig = resolve(fixturesDir, "oxlintrc.empty-strict.json");
 const emptyMessageConfig = resolve(fixturesDir, "oxlintrc.empty-message.json");
 
@@ -49,7 +50,11 @@ const annotationlessMessage = (name: string): string => {
 };
 
 const asAssertionMessage = (name: string): string => {
-  return `Const '${name}' uses an 'as' assertion on a literal initializer. Move the type into a 'satisfies' clause: write 'const ${name} = ... satisfies T' instead of 'const ${name} = ... as T'. ('as const' is allowed.)`;
+  return `Const '${name}' uses an 'as' assertion on a literal initializer. Move the type into a 'satisfies' clause: write 'const ${name} = ... satisfies T' instead of 'const ${name} = ... as T'. ('as const' is controlled separately by the 'allowAsConst' option.)`;
+};
+
+const asConstMessage = (name: string): string => {
+  return `Const '${name}' uses 'as const' on a literal initializer but declares no type. Add a 'satisfies' clause: write 'const ${name} = ... as const satisfies T' (the 'as const' must come before 'satisfies'). Enable the 'allowAsConst' option to allow a bare 'as const'.`;
 };
 
 // Must match the `message` in fixtures/oxlintrc.empty-message.json exactly.
@@ -59,6 +64,7 @@ const emptyCustomMessage =
 let defaultDiagnostics: Diagnostic[] = [];
 let allowDiagnostics: Diagnostic[] = [];
 let allowAsDiagnostics: Diagnostic[] = [];
+let allowAsConstDiagnostics: Diagnostic[] = [];
 let emptyStrictDiagnostics: Diagnostic[] = [];
 let emptyMessageDiagnostics: Diagnostic[] = [];
 
@@ -70,6 +76,7 @@ beforeAll(() => {
   defaultDiagnostics = runFixtures(defaultConfig);
   allowDiagnostics = runFixtures(allowConfig);
   allowAsDiagnostics = runFixtures(allowAsConfig);
+  allowAsConstDiagnostics = runFixtures(allowAsConstConfig);
   emptyStrictDiagnostics = runFixtures(emptyStrictConfig);
   emptyMessageDiagnostics = runFixtures(emptyMessageConfig);
 });
@@ -109,6 +116,13 @@ describe("default options", () => {
     ]);
   });
 
+  test("'as const' on non-empty literals are reported", () => {
+    expect(messagesFor(defaultDiagnostics, "ng-as-const.ts")).toEqual([
+      asConstMessage("frozen"),
+      asConstMessage("frozenArr"),
+    ]);
+  });
+
   test("empty literals are allowed by default", () => {
     expect(messagesFor(defaultDiagnostics, "ng-empty.ts")).toEqual([]);
   });
@@ -118,7 +132,7 @@ describe("default options", () => {
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(defaultDiagnostics.length).toBe(8);
+    expect(defaultDiagnostics.length).toBe(10);
   });
 });
 
@@ -143,6 +157,13 @@ describe("allowWithoutAnnotation: true", () => {
     ]);
   });
 
+  test("'as const' on non-empty literals are still reported", () => {
+    expect(messagesFor(allowDiagnostics, "ng-as-const.ts")).toEqual([
+      asConstMessage("frozen"),
+      asConstMessage("frozenArr"),
+    ]);
+  });
+
   test("empty literals are allowed by default", () => {
     expect(messagesFor(allowDiagnostics, "ng-empty.ts")).toEqual([]);
   });
@@ -152,7 +173,7 @@ describe("allowWithoutAnnotation: true", () => {
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(allowDiagnostics.length).toBe(6);
+    expect(allowDiagnostics.length).toBe(8);
   });
 });
 
@@ -175,6 +196,13 @@ describe("allowAsAssertion: true", () => {
     expect(messagesFor(allowAsDiagnostics, "ng-as.ts")).toEqual([]);
   });
 
+  test("'as const' is still reported (a separate option from allowAsAssertion)", () => {
+    expect(messagesFor(allowAsDiagnostics, "ng-as-const.ts")).toEqual([
+      asConstMessage("frozen"),
+      asConstMessage("frozenArr"),
+    ]);
+  });
+
   test("empty literals are allowed by default", () => {
     expect(messagesFor(allowAsDiagnostics, "ng-empty.ts")).toEqual([]);
   });
@@ -184,7 +212,47 @@ describe("allowAsAssertion: true", () => {
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(allowAsDiagnostics.length).toBe(4);
+    expect(allowAsDiagnostics.length).toBe(6);
+  });
+});
+
+describe("allowAsConst: true", () => {
+  test("'as const' on literals are ignored", () => {
+    expect(messagesFor(allowAsConstDiagnostics, "ng-as-const.ts")).toEqual([]);
+  });
+
+  test("annotated literals are still reported", () => {
+    expect(messagesFor(allowAsConstDiagnostics, "ng-annotated.ts")).toEqual([
+      annotatedMessage("origin"),
+      annotatedMessage("nums"),
+    ]);
+  });
+
+  test("annotationless literals are still reported", () => {
+    expect(
+      messagesFor(allowAsConstDiagnostics, "ng-annotationless.ts"),
+    ).toEqual([annotationlessMessage("obj"), annotationlessMessage("arr")]);
+  });
+
+  test("'as' assertions on literals are still reported", () => {
+    expect(messagesFor(allowAsConstDiagnostics, "ng-as.ts")).toEqual([
+      asAssertionMessage("origin"),
+      asAssertionMessage("nums"),
+      asAssertionMessage("forced"),
+      asAssertionMessage("forcedArr"),
+    ]);
+  });
+
+  test("empty literals are allowed by default", () => {
+    expect(messagesFor(allowAsConstDiagnostics, "ng-empty.ts")).toEqual([]);
+  });
+
+  test.each(okFiles)("%s has no diagnostics", (file) => {
+    expect(messagesFor(allowAsConstDiagnostics, file)).toEqual([]);
+  });
+
+  test("total diagnostics are fully accounted for", () => {
+    expect(allowAsConstDiagnostics.length).toBe(8);
   });
 });
 
@@ -215,6 +283,10 @@ describe("allowEmptyLiteral: false", () => {
       asAssertionMessage("forced"),
       asAssertionMessage("forcedArr"),
     ]);
+    expect(messagesFor(emptyStrictDiagnostics, "ng-as-const.ts")).toEqual([
+      asConstMessage("frozen"),
+      asConstMessage("frozenArr"),
+    ]);
   });
 
   test.each(okFiles)("%s has no diagnostics", (file) => {
@@ -222,7 +294,7 @@ describe("allowEmptyLiteral: false", () => {
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(emptyStrictDiagnostics.length).toBe(15);
+    expect(emptyStrictDiagnostics.length).toBe(17);
   });
 });
 
@@ -250,6 +322,10 @@ describe("allowEmptyLiteral: { message }", () => {
       asAssertionMessage("forced"),
       asAssertionMessage("forcedArr"),
     ]);
+    expect(messagesFor(emptyMessageDiagnostics, "ng-as-const.ts")).toEqual([
+      asConstMessage("frozen"),
+      asConstMessage("frozenArr"),
+    ]);
   });
 
   test.each(okFiles)("%s has no diagnostics", (file) => {
@@ -257,6 +333,6 @@ describe("allowEmptyLiteral: { message }", () => {
   });
 
   test("total diagnostics are fully accounted for", () => {
-    expect(emptyMessageDiagnostics.length).toBe(15);
+    expect(emptyMessageDiagnostics.length).toBe(17);
   });
 });

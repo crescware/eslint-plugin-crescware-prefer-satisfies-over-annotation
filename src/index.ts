@@ -45,6 +45,7 @@ type EmptyLiteralOption = boolean | { message: string };
 type RuleOptions = {
   allowWithoutAnnotation?: boolean;
   allowAsAssertion?: boolean;
+  allowAsConst?: boolean;
   allowEmptyLiteral?: EmptyLiteralOption;
 };
 
@@ -155,7 +156,18 @@ const annotationlessMessage = (name: string): string => {
 // plain annotation, `as` also bypasses checking, so moving to `satisfies` both
 // preserves the narrow inferred type and restores the assignability check.
 const asAssertionMessage = (name: string): string => {
-  return `Const '${name}' uses an 'as' assertion on a literal initializer. Move the type into a 'satisfies' clause: write 'const ${name} = ... satisfies T' instead of 'const ${name} = ... as T'. ('as const' is allowed.)`;
+  return `Const '${name}' uses an 'as' assertion on a literal initializer. Move the type into a 'satisfies' clause: write 'const ${name} = ... satisfies T' instead of 'const ${name} = ... as T'. ('as const' is controlled separately by the 'allowAsConst' option.)`;
+};
+
+// `as const`: `const x = {...} as const`. It freezes the literal's type but
+// declares no type to check the value against, so by default it is reported;
+// suppressed only when the `allowAsConst` option is true. The fix keeps the
+// freeze AND adds a check by appending `satisfies` -- but `as const` must come
+// first: `{...} as const satisfies T` is valid, whereas `{...} satisfies T as
+// const` is a type error because `as const` can only apply to a literal, not to
+// a `satisfies` expression.
+const asConstMessage = (name: string): string => {
+  return `Const '${name}' uses 'as const' on a literal initializer but declares no type. Add a 'satisfies' clause: write 'const ${name} = ... as const satisfies T' (the 'as const' must come before 'satisfies'). Enable the 'allowAsConst' option to allow a bare 'as const'.`;
 };
 
 const rule = {
@@ -163,7 +175,7 @@ const rule = {
     type: "suggestion",
     docs: {
       description:
-        "Require object and array literals bound to a `const` to declare their type with `satisfies` rather than a binding annotation or an `as` assertion. A type annotation is always reported; a missing type is reported unless the `allowWithoutAnnotation` option is enabled; an `as` assertion other than `as const` is reported unless the `allowAsAssertion` option is enabled. An empty object/array literal (`{}` / `[]`) is allowed by default because `satisfies` cannot type it usefully; set `allowEmptyLiteral` to `false` to report it with the standard message, or to `{ message }` to report it with a custom message.",
+        "Require object and array literals bound to a `const` to declare their type with `satisfies` rather than a binding annotation or an `as` assertion. A type annotation is always reported; a missing type is reported unless the `allowWithoutAnnotation` option is enabled; an `as` assertion other than `as const` is reported unless the `allowAsAssertion` option is enabled; an `as const` assertion is reported unless the `allowAsConst` option is enabled. An empty object/array literal (`{}` / `[]`) is allowed by default because `satisfies` cannot type it usefully; set `allowEmptyLiteral` to `false` to report it with the standard message, or to `{ message }` to report it with a custom message.",
     },
     schema: [
       {
@@ -171,6 +183,7 @@ const rule = {
         properties: {
           allowWithoutAnnotation: { type: "boolean" },
           allowAsAssertion: { type: "boolean" },
+          allowAsConst: { type: "boolean" },
           allowEmptyLiteral: {
             oneOf: [
               { type: "boolean" },
@@ -195,6 +208,7 @@ const rule = {
     const allowWithoutAnnotation =
       context.options[0]?.allowWithoutAnnotation === true;
     const allowAsAssertion = context.options[0]?.allowAsAssertion === true;
+    const allowAsConst = context.options[0]?.allowAsConst === true;
     const rawEmptyLiteral = context.options[0]?.allowEmptyLiteral;
     const allowEmptyLiteral: EmptyLiteralOption =
       rawEmptyLiteral === undefined ? true : rawEmptyLiteral;
@@ -211,16 +225,12 @@ const rule = {
       if (init === null || init === undefined) {
         return;
       }
-      // `as const` is always allowed, empty or not -- resolve it before the
-      // empty-literal gate so `{} as const` is never treated as an empty
-      // literal to report.
-      if (init.type === "TSAsExpression" && isAsConst(init as AsExpression)) {
-        return;
-      }
-      // Empty literals (`{}` / `[]`, including through an `as` chain): by
-      // default they are skipped because `satisfies` cannot type them. `false`
-      // falls through to the normal 0.0.1 handling; the object form reports
-      // with the caller's custom message.
+      // Empty literals (`{}` / `[]`, including through an `as` chain, and
+      // including `{} as const`) are handled first: `satisfies` cannot type
+      // them, so the empty-literal policy takes precedence over both the `as`
+      // and `as const` policies. By default they are skipped; `false` falls
+      // through to the normal handling below; the object form reports with the
+      // caller's custom message.
       if (initIsEmptyLiteral(init)) {
         if (allowEmptyLiteral === true) {
           return;
@@ -233,6 +243,16 @@ const rule = {
       if (init.type === "TSAsExpression") {
         const asExpr = init as AsExpression;
         if (!isPlainObjectOrArrayLiteral(unwrapAsChain(asExpr))) {
+          return;
+        }
+        // `as const` declares no type to check against; reported unless
+        // `allowAsConst` is enabled. It is distinct from `as T`, which carries
+        // its own option and message.
+        if (isAsConst(asExpr)) {
+          if (allowAsConst) {
+            return;
+          }
+          context.report({ message: asConstMessage(id.name), node: id });
           return;
         }
         if (allowAsAssertion) {
